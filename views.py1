@@ -1,0 +1,36 @@
+# webhook_handler/views.py
+
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
+from .models import Account, Destination
+import requests
+
+@method_decorator(csrf_exempt, name='dispatch')
+def incoming_data(request):
+    if request.method == 'POST':
+        data = request.POST.dict() or {}
+        app_secret_token = request.headers.get('CL-X-TOKEN')
+        if not app_secret_token:
+            return JsonResponse({'error': 'Unauthenticated'}, status=401)
+        
+        try:
+            account = Account.objects.get(app_secret_token=app_secret_token)
+        except Account.DoesNotExist:
+            return JsonResponse({'error': 'Invalid App Secret Token'}, status=403)
+        
+        for destination in account.destinations.all():
+            headers = destination.headers
+            if destination.http_method.upper() == 'GET':
+                response = requests.get(destination.url, params=data, headers=headers)
+            elif destination.http_method.upper() in ['POST', 'PUT']:
+                response = requests.request(destination.http_method.upper(), destination.url, json=data, headers=headers)
+            else:
+                return JsonResponse({'error': 'Invalid HTTP Method'}, status=400)
+
+            if response.status_code != 200:
+                return JsonResponse({'error': 'Failed to send data to destination'}, status=500)
+
+        return JsonResponse({'message': 'Data sent to destinations successfully'}, status=200)
+    else:
+        return JsonResponse({'error': 'Invalid Method'}, status=405)
